@@ -1,0 +1,105 @@
+---
+title: "Prediction Assignment Writeup"
+author: "FD"
+date: "30 Mai 2016"
+output: html_document
+references:
+- id:	velloso
+  title: Qualitative Activity Recognition of Weight Lifting Exercises
+  container-title: Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)
+  author:
+    - family: Velloso E.
+    - family: Bulling A.
+    - family: Gellersen H.
+    - family: Ugulino W.
+    - family: Fuks H.
+  issued:
+    year: 2013
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Summary
+
+This presentation is about predicting the type of exercise for 20 subjects based on sensor data from weight lifting experiments. For the background and reference please see [@velloso]. Two models are fitted: Random forest and generalized boosted regression model. Random forest give the best accuracy on the test set and is used for prediction.
+This work is done in the context of the Coursera Data Science Specialization course.
+
+## Data
+
+The training and test data is downloaded from the course website. The training data contains a classification (_classe_), which indicates the type of exercise done. It is indicated by a character between A and E. The test data contain some columns with missing values, which will be skipped in the analysis (model is used for the prediction in the given test set only).
+
+The data contain columns, which are not useful for prediction (number of data point, subject name, ...). These data are located in the first 7 columns and skipped. _This also includes the timepoint of the measurement, neglecting any time-dependent effects in the further analysis._
+
+After data cleanup, there are no zero variance variables in the training set. The data consists, after the clean up, of 52 variables all of numerical type.
+
+```{r, warning=F, message=F}
+library(caret)
+if(!file.exists("pml-training.csv")){
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", "pml-training.csv")
+}
+if(!file.exists("pml-testing.csv")){
+  download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", "pml-testing.csv")
+}
+
+training<-read.csv("pml-training.csv")
+predictionData<-read.csv("pml-testing.csv")
+
+noTestData<-colSums(!is.na(predictionData))==nrow(predictionData)
+smallTraining<-training[,noTestData]
+smallPredictionData<-predictionData[,noTestData]
+
+smallTraining<-smallTraining[,c(-1, -2, -3, -4, -5, -6, -7)]
+smallPredictionData<-smallPredictionData[,c(-1, -2, -3, -4, -5, -6, -7)]
+
+zero<-nearZeroVar(smallTraining)
+print(zero)
+```
+
+To test the out of sample error, the training set is split in train and test data.
+
+```{r, warning=F, message=F}
+set.seed(1234)
+inTrain=createDataPartition(smallTraining$classe, p=0.6, list=F)
+```
+
+## Model training
+
+Two models (random forest and gbm) are trained, both should be giving good accuracy for the given problem. For gbm, 150 boosting iterations are used. 5-fold cross validation is used on both models.
+
+Both models give the most importance to the variable _roll\_belt_, the remaining order is similar but not equal. Random forest performs slightly better than gbm and leads to an out-of-sample accuracy of 0.9912 compared with 0.9583 for gbm.
+
+```{r, warning=F, message=F, results=F }
+library(reshape2)
+
+trControl<-trainControl(method="cv", number=5, allowParallel=T)
+m1<-train(classe~., method="rf", data=smallTraining[inTrain,], trControl=trControl)
+m2<-train(classe~., method="gbm", data=smallTraining[inTrain,], trControl=trControl)
+```
+
+```{r, warning=F, message=F}
+c1=confusionMatrix(predict(m1, newdata=smallTraining[-inTrain,]), smallTraining[-inTrain,]$classe)
+c2=confusionMatrix(predict(m2, newdata=smallTraining[-inTrain,]), smallTraining[-inTrain,]$classe)
+
+print(c1)
+print(c2)
+
+v1<-varImp(m1)$importance
+v2<-varImp(m2)$importance
+
+prePlotData<-cbind(rf=v1, gbm=v2)
+colnames(prePlotData)=c("rf", "gbm")
+plotData<-melt(as.matrix(prePlotData), id.vars=c(1, 2))
+colnames(plotData)<-c("variableName", "method", "value")
+p<-ggplot(plotData,aes(x = variableName,y = value)) + geom_bar(aes(fill = method),position = "dodge", stat="identity")+coord_flip()+facet_grid(~method)+scale_x_discrete(limits=rownames(v1)[order(v1, decreasing=F)])+labs(x="Variable importance", y="Variable name", title="Variable importance")
+print(p)
+```
+
+## Predicting 20 unknown cases
+
+```{r, warning=F, message=F}
+predicted<-predict(m1, newdata=smallPredictionData)
+print(predicted)
+```
+
+## Reference
